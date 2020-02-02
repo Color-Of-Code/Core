@@ -113,17 +113,19 @@ void ShaderPass::checkError() {
     const char* resource_desc = !parent->resource_name.empty() ? parent->resource_name.c_str() : "???";
 
     if(info_log_length > 1) {
-        char info_log[info_log_length];
-
+        char* info_log = new char[info_log_length];
         glGetShaderInfoLog(shader_object, info_log_length, &info_log_length, info_log);
 
+        std::string info_log_str(info_log);
+        delete info_log;
+
         std::string context;
-        if(!errorContext(info_log, context))
+        if(!errorContext(info_log_str, context))
             context = shader_object_source;
 
         if(!compile_success) {
             throw ShaderException(str(boost::format("%s shader '%s' failed to compile:\n%s\n%s")
-                 % shader_object_desc % resource_desc % ((const char*)info_log) % context),
+                 % shader_object_desc % resource_desc % info_log_str.c_str() % context),
                  shader_object_source);
         }
 
@@ -131,9 +133,8 @@ void ShaderPass::checkError() {
             warnLog("%s shader '%s':\n%s\n%s",
                             shader_object_desc.c_str(),
                             resource_desc,
-                            info_log,
+                            info_log_str.c_str(),
                             context.c_str());
-
         }
 
         return;
@@ -196,9 +197,7 @@ void Shader::unload() {
     }
 }
 
-void Shader::load() {
-    //fprintf(stderr, "load\n");
-
+void Shader::compile() {
     if(program !=0) unload();
 
     if(vertex_shader != 0)   vertex_shader->compile();
@@ -206,7 +205,9 @@ void Shader::load() {
     if(fragment_shader != 0) fragment_shader->compile();
 
     program = glCreateProgram();
+}
 
+void Shader::link() {
     if(vertex_shader!=0)   vertex_shader->attachTo(program);
     if(geometry_shader!=0) geometry_shader->attachTo(program);
     if(fragment_shader!=0) fragment_shader->attachTo(program);
@@ -218,6 +219,11 @@ void Shader::load() {
     if(vertex_shader  != 0)  vertex_shader->unload();
     if(geometry_shader != 0) geometry_shader->unload();
     if(fragment_shader != 0) fragment_shader->unload();
+}
+
+void Shader::load() {
+    compile();
+    link();
 }
 
 void Shader::loadPrefix() {
@@ -253,7 +259,7 @@ void Shader::checkProgramError() {
     const char* resource_desc = !resource_name.empty() ? resource_name.c_str() : "???";
 
     if(info_log_length > 1) {
-        char info_log[info_log_length];
+        char* info_log = new char[info_log_length];
         glGetProgramInfoLog(program, info_log_length, &info_log_length, info_log);
 
         if(!link_success) {
@@ -261,6 +267,7 @@ void Shader::checkProgramError() {
         } else if(Logger::getDefault()->getLevel() == LOG_LEVEL_WARN) {
             warnLog("shader '%s' warning:\n%s", resource_desc, info_log);
         }
+        delete info_log;
     }
 
     if(!link_success) {
@@ -307,6 +314,9 @@ void Shader::applyUniform(ShaderUniform* u) {
         case SHADER_UNIFORM_SAMPLER_2D:
             glUniform1i(location, ((Sampler2DShaderUniform*)u)->getValue());
             break;
+        case SHADER_UNIFORM_SAMPLER_3D:
+            glUniform1i(location, ((Sampler3DShaderUniform*)u)->getValue());
+            break;
         case SHADER_UNIFORM_VEC2:
             glUniform2fv(location, 1, glm::value_ptr(((Vec2ShaderUniform*)u)->getValue()));
             break;
@@ -321,6 +331,12 @@ void Shader::applyUniform(ShaderUniform* u) {
             break;
         case SHADER_UNIFORM_MAT4:
             glUniformMatrix4fv(location, 1, 0, glm::value_ptr(((Mat4ShaderUniform*)u)->getValue()));
+            break;
+        case SHADER_UNIFORM_INT_ARRAY:
+            glUniform1iv(location, ((IntegerArrayShaderUniform*)u)->getLength(), &(((IntegerArrayShaderUniform*)u)->getValue()[0]));
+            break;
+        case SHADER_UNIFORM_FLOAT_ARRAY:
+            glUniform1fv(location, ((FloatArrayShaderUniform*)u)->getLength(), &(((FloatArrayShaderUniform*)u)->getValue()[0]));
             break;
         case SHADER_UNIFORM_VEC2_ARRAY:
             glUniform2fv(location, ((Vec2ArrayShaderUniform*)u)->getLength(), glm::value_ptr(((Vec2ArrayShaderUniform*)u)->getValue()[0]));
@@ -346,8 +362,8 @@ AbstractShaderPass* Shader::grabShaderPass(unsigned int shader_object_type) {
             if(!vertex_shader) vertex_shader = new ShaderPass(this, GL_VERTEX_SHADER, "vertex");
             shader_pass = vertex_shader;
             break;
-        case GL_GEOMETRY_SHADER_ARB:
-            if(!geometry_shader) geometry_shader = new ShaderPass(this, GL_GEOMETRY_SHADER_ARB, "geometry");
+        case GL_GEOMETRY_SHADER:
+            if(!geometry_shader) geometry_shader = new ShaderPass(this, GL_GEOMETRY_SHADER, "geometry");
             shader_pass = geometry_shader;
             break;
         case GL_FRAGMENT_SHADER:
